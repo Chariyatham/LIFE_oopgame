@@ -6,257 +6,173 @@ import javafx.scene.Scene;
 import javafx.scene.input.KeyCode;
 import javafx.scene.layout.Pane;
 import javafx.scene.paint.Color;
-import javafx.scene.shape.Rectangle;
 import javafx.stage.Stage;
 import javafx.scene.text.Font;
 import javafx.scene.text.Text;
 
-// 1. เพิ่ม import สำหรับ List
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * นี่คือ Class หลักของเกม ทำหน้าที่เป็น "ผู้จัดการ"
+ * คอยควบคุม Game Loop, Camera, และการแสดงผล (UI)
+ */
 public class Game extends Application {
 
-    // --- ตัวแปรผู้เล่นและฟิสิกส์ ---
-    private Rectangle player;
-    private double velocityX = 0;
-    private double velocityY = 0;
-    private boolean onGround = false;
-
-    // --- ตัวแปรระบบชาร์จ ---
-    private boolean isMovingLeft = false;
-    private boolean isMovingRight = false;
-    private long lastUpdateNanos = 0;
-    private boolean isChargingJump = false;
-    private double chargeTimer = 0.0;
+    // --- ตัวแปรหลัก ---
+    private Player player;
+    private List<Platform> allPlatforms;
     private Text chargeLevelText;
-    private int currentChargeLevel = 0;
+    private long lastUpdateNanos = 0;
+    private Pane root; // "โลก" ทั้งใบ (Pane ที่เลื่อนได้)
+    private Pane mainPane; // "หน้าต่าง" ที่ครอบโลกและ UI (Pane ที่อยู่กับที่)
+    private AnimationTimer gameLoop; // ตัวควบคุม Game Loop
+    private Text victoryText; // ป้าย "ชนะ"
 
-    // --- 2. เปลี่ยน! จากแท่นเดียวเป็น "กล่อง" (List) ---
-    private List<Rectangle> allPlatforms;
-
-    // --- ค่าคงที่เกม ---
-    private static final double GRAVITY = 1000.0;
-    private static final double MAX_CHARGE_TIME = 1.0;
-    private static final double JUMP_POWER_Y_PER_LEVEL = -180.0;
-    private static final double JUMP_POWER_X_PER_LEVEL = 100.0;
+    // --- ค่าคงที่ของ "โลก" และ "หน้าต่าง" ---
     private static final int WINDOW_WIDTH = 800;
-    private static final int WINDOW_HEIGHT = 600;
-    private static final int PLAYER_HEIGHT = 80;
-    private static final double GROUND_LEVEL = WINDOW_HEIGHT - PLAYER_HEIGHT;
+    private static final int WINDOW_HEIGHT = 600; // นี่คือขนาด "หน้าต่าง"
+
+    // "โลก" ของเราจะสูง 1800px
+    private static final int WORLD_HEIGHT = 1800;
+    // (Player สูง 80 ตามค่าคงที่ใน Player.java)
+    private static final double GROUND_LEVEL = WORLD_HEIGHT - 80;
+
+    // --- ค่าสำหรับ "กล้อง" ---
+    private static final double CAMERA_THRESHOLD_Y_TOP = WINDOW_HEIGHT / 3.0; // ขอบบน (ที่ 200)
+    private static final double CAMERA_THRESHOLD_Y_BOTTOM = WINDOW_HEIGHT * 0.75; // ขอบล่าง (ที่ 450)
+
 
     @Override
     public void start(Stage primaryStage) {
-        primaryStage.setTitle("LIFE:D - บทที่ 7.3: สร้างด่าน!");
+        primaryStage.setTitle("LIFE:D - Jump King (บทที่ 10 - สี่เหลี่ยม)");
 
-        Pane root = new Pane();
+        // 1. สร้าง "โลก"
+        root = new Pane();
         root.setStyle("-fx-background-color: #3C486B;");
+        root.setPrefSize(WINDOW_WIDTH, WORLD_HEIGHT); // กำหนดให้ "โลก" สูง 1800px
 
-        // Player และ Text (เหมือนเดิม)
-        player = new Rectangle(60, PLAYER_HEIGHT, Color.ORANGE);
-        player.setX(370);
-        player.setY(GROUND_LEVEL);
+        // 2. สร้าง "ผู้เล่น" (ตอนนี้ยังเป็น Rectangle) วางไว้ล่างสุดของโลก
+        player = new Player(370, GROUND_LEVEL);
+
+        // 3. สร้าง "UI" (ข้อความ)
         chargeLevelText = new Text("Level: 0");
         chargeLevelText.setFont(Font.font("Arial", 24));
         chargeLevelText.setFill(Color.WHITE);
+
+        victoryText = new Text("YOU WIN!");
+        victoryText.setFont(Font.font("Arial", 80));
+        victoryText.setFill(Color.GOLD);
+        victoryText.setVisible(false); // ซ่อนไว้ก่อน
+
+        // 4. สร้าง "แท่น" ทั้งหมด (สร้างด่านแบบ Manual)
+        allPlatforms = new ArrayList<>();
+
+        // --- ออกแบบด่าน ---
+        allPlatforms.add(new Platform(200, 1600, 150, 20, Color.GREEN));
+        allPlatforms.add(new Platform(450, 1500, 200, 20, Color.GREEN));
+        allPlatforms.add(new Platform(350, 1400, 50, 20, Color.RED)); // แท่นแดง
+
+        // แท่นลื่น (ฟ้า)
+        Platform icePlatform = new Platform(100, 1200, 150, 20, Color.CYAN);
+        icePlatform.setAsSlippery(); // <<< สั่งให้มัน "ลื่น"
+        allPlatforms.add(icePlatform);
+
+        // แท่นธรรมดา (เขียว)
+        allPlatforms.add(new Platform(500, 1000, 150, 20, Color.GREEN));
+        allPlatforms.add(new Platform(300, 800, 150, 20, Color.GREEN));
+        allPlatforms.add(new Platform(100, 600, 150, 20, Color.GREEN));
+        allPlatforms.add(new Platform(400, 400, 150, 20, Color.GREEN));
+
+        // แท่นชนะ (ทอง)
+        Platform victoryPlatform = new Platform(250, 200, 150, 20, Color.GOLD);
+        victoryPlatform.setAsVictoryPlatform(); // <<< สั่งให้เป็นแท่นชนะ
+        allPlatforms.add(victoryPlatform);
+
+        // --- สิ้นสุดการออกแบบด่าน ---
+
+        // 5. ประกอบร่าง "โลก" และ "UI"
+        root.getChildren().add(player.getShape()); // เพิ่มผู้เล่นเข้า "โลก"
+        root.getChildren().addAll(allPlatforms); // เพิ่มแท่นทั้งหมดเข้า "โลก"
+
+        mainPane = new Pane(); // "หน้าต่าง" ที่ครอบทุกอย่าง
+        mainPane.getChildren().add(root); // เอา "โลก" (root) ใส่เข้าไป
+        mainPane.getChildren().addAll(chargeLevelText, victoryText); // เอา "UI" ใส่ทับ (UI จะไม่เลื่อนตาม)
+
+        // ตั้งค่าตำแหน่ง UI ให้อยู่มุมบนขวา "ของหน้าต่าง"
         chargeLevelText.setX(WINDOW_WIDTH - 120);
         chargeLevelText.setY(30);
 
-        // --- 3. สร้าง "กล่อง" และ "แท่น" ---
-        allPlatforms = new ArrayList<>(); // สร้างกล่องเปล่า
+        // 6. สร้าง Scene (จาก "หน้าต่าง" mainPane)
+        Scene scene = new Scene(mainPane, WINDOW_WIDTH, WINDOW_HEIGHT);
 
-        // สร้างแท่นที่ 1
-        Rectangle platform1 = new Rectangle(150, 20, Color.GREEN);
-        platform1.setX(200);
-        platform1.setY(400);
-
-        // สร้างแท่นที่ 2
-        Rectangle platform2 = new Rectangle(200, 20, Color.GREEN);
-        platform2.setX(450); // ขยับไปทางขวา
-        platform2.setY(300); // สูงขึ้นไปอีก
-
-        // สร้างแท่นที่ 3 (แท่นเล็กๆ)
-        Rectangle platform3 = new Rectangle(50, 20, Color.RED); // สีแดง
-        platform3.setX(350);
-        platform3.setY(200);
-
-        // --- 4. "หย่อน" แท่นทั้งหมดลงกล่อง ---
-        allPlatforms.add(platform1);
-        allPlatforms.add(platform2);
-        allPlatforms.add(platform3);
-
-        // --- 5. เพิ่มทุกอย่างลงในฉาก ---
-        root.getChildren().addAll(player, chargeLevelText); // เพิ่ม player, text
-        root.getChildren().addAll(allPlatforms); // เพิ่ม "แท่นทั้งหมด" ในกล่องทีเดียว!
-
-        Scene scene = new Scene(root, WINDOW_WIDTH, WINDOW_HEIGHT);
-
-        // --- ส่วน "กด" (เหมือนเดิม) ---
+        // 7. ตั้งค่าการควบคุม (สั่งการ Player)
         scene.setOnKeyPressed(event -> {
             switch (event.getCode()) {
-                case LEFT:
-                    isMovingLeft = true;
-                    break;
-                case RIGHT:
-                    isMovingRight = true;
-                    break;
-                case SPACE:
-                    if (onGround) {
-                        isChargingJump = true;
-                    }
-                    break;
+                case LEFT:  player.setMoveLeft(true); break;
+                case RIGHT: player.setMoveRight(true); break;
+                case SPACE: player.startCharging(); break;
             }
         });
 
-        // --- ส่วน "ปล่อย" (เหมือนเดิม) ---
         scene.setOnKeyReleased(event -> {
             switch (event.getCode()) {
-                case LEFT:
-                    isMovingLeft = false;
-                    break;
-                case RIGHT:
-                    isMovingRight = false;
-                    break;
-                case SPACE:
-                    if (isChargingJump) {
-                        if (currentChargeLevel > 0) {
-                            double launchSpeedY = -200 + (currentChargeLevel * JUMP_POWER_Y_PER_LEVEL);
-                            velocityY = launchSpeedY;
-
-                            double launchSpeedX = 150 + (currentChargeLevel * JUMP_POWER_X_PER_LEVEL);
-
-                            if (isMovingLeft) {
-                                velocityX = -launchSpeedX;
-                            } else if (isMovingRight) {
-                                velocityX = launchSpeedX;
-                            } else {
-                                velocityX = 0;
-                            }
-
-                            onGround = false;
-                        }
-                        isChargingJump = false;
-                    }
-                    break;
+                case LEFT:  player.setMoveLeft(false); break;
+                case RIGHT: player.setMoveRight(false); break;
+                case SPACE: player.releaseJump(); break;
             }
         });
 
-        AnimationTimer gameLoop = new AnimationTimer() {
+
+        // 8. สร้างและเริ่ม Game Loop
+        gameLoop = new AnimationTimer() {
             @Override
             public void handle(long now) {
-                // (โค้ด deltaTime)
-                if (lastUpdateNanos == 0) {
-                    lastUpdateNanos = now;
-                    return;
-                }
+                // (คำนวณ Delta Time)
+                if (lastUpdateNanos == 0) { lastUpdateNanos = now; return; }
                 double deltaTime = (now - lastUpdateNanos) / 1_000_000_000.0;
                 lastUpdateNanos = now;
 
-                // (โค้ดอัปเดตชาร์จและ UI)
-                if (isChargingJump && onGround) {
-                    chargeTimer += deltaTime;
-                    if (chargeTimer > MAX_CHARGE_TIME)
-                        chargeTimer = MAX_CHARGE_TIME;
+                // --- 1. สั่ง Player ให้อัปเดตตัวเอง (สมองอยู่ที่ Player.update) ---
+                player.update(deltaTime, allPlatforms);
 
-                    if (chargeTimer >= MAX_CHARGE_TIME)
-                        currentChargeLevel = 5;
-                    else if (chargeTimer >= 0.8)
-                        currentChargeLevel = 4;
-                    else if (chargeTimer >= 0.6)
-                        currentChargeLevel = 3;
-                    else if (chargeTimer >= 0.4)
-                        currentChargeLevel = 2;
-                    else if (chargeTimer >= 0.2)
-                        currentChargeLevel = 1;
-                    else
-                        currentChargeLevel = 0;
-                } else {
-                    chargeTimer = 0.0;
-                    currentChargeLevel = 0;
+                // --- 2. อัปเดต UI (ถาม Player ว่าเลเวลเท่าไหร่) ---
+                chargeLevelText.setText(player.getChargeLevelText());
+
+                // --- 3. อัปเดต "กล้อง" ---
+                double playerY = player.getY();
+                double playerHeight = player.getHeight();
+                double cameraY = -root.getTranslateY(); // ตำแหน่ง Y ปัจจุบันของกล้อง (เป็นบวก)
+
+                double newCameraY = cameraY; // ตำแหน่งใหม่ (เริ่มต้นให้เท่าเดิม)
+
+                // เช็คเลื่อน "ขึ้น"
+                if (playerY < cameraY + CAMERA_THRESHOLD_Y_TOP) {
+                    newCameraY = playerY - CAMERA_THRESHOLD_Y_TOP;
                 }
-                chargeLevelText.setText("Level: " + currentChargeLevel);
-
-                // --- 1. อัปเดตฟิสิกส์ (ถ้าลอยอยู่) ---
-                if (!onGround) {
-
-                    // --- 1A. ขยับและตรวจสอบ "แกน X" ---
-                    double oldX = player.getX();
-                    player.setX(player.getX() + velocityX * deltaTime);
-
-                    // --- 6. หุ้มด้วย FOR LOOP ---
-                    for (Rectangle platform : allPlatforms) { // "สำหรับแท่นทุกอัน..."
-                        boolean isOverlappingY = player.getY() + player.getHeight() > platform.getY() &&
-                                player.getY() < platform.getY() + platform.getHeight();
-
-                        if (isOverlappingY) {
-                            // เคส 1: ชน "ด้านซ้าย" ของแท่น
-                            if (velocityX > 0 &&
-                                    oldX + player.getWidth() <= platform.getX() &&
-                                    player.getX() + player.getWidth() >= platform.getX()) {
-                                player.setX(platform.getX() - player.getWidth()); // ยันกลับ
-                                velocityX = 0;
-                                break; // --- 8. สำคัญ: ชนแล้ว "หยุด" เช็คอันอื่น ---
-                            }
-                            // เคส 2: ชน "ด้านขวา" ของแท่น
-                            else if (velocityX < 0 &&
-                                    oldX >= platform.getX() + platform.getWidth() &&
-                                    player.getX() <= platform.getX() + platform.getWidth()) {
-                                player.setX(platform.getX() + platform.getWidth()); // ยันกลับ
-                                velocityX = 0;
-                                break; // --- 8. สำคัญ: ชนแล้ว "หยุด" เช็คอันอื่น ---
-                            }
-                        }
-                    } // --- สิ้นสุด For Loop (แกน X) ---
-
-                    // --- 1B. ขยับและตรวจสอบ "แกน Y" ---
-                    double oldY = player.getY();
-                    velocityY += GRAVITY * deltaTime;
-                    player.setY(player.getY() + velocityY * deltaTime);
-
-                    // --- 6. หุ้มด้วย FOR LOOP (อีกครั้ง) ---
-                    for (Rectangle platform : allPlatforms) { // "สำหรับแท่นทุกอัน..."
-                        boolean isOverlappingX = player.getX() + player.getWidth() > platform.getX() &&
-                                player.getX() < platform.getX() + platform.getWidth();
-
-                        if (isOverlappingX) {
-                            // เคส 3: "ตกลงมาเหยียบ"
-                            if (velocityY > 0 &&
-                                    oldY + player.getHeight() <= platform.getY() &&
-                                    player.getY() + player.getHeight() >= platform.getY()) {
-                                player.setY(platform.getY() - player.getHeight()); // ยืนบนแท่น
-                                velocityY = 0;
-                                velocityX = 0; // หยุด X ด้วย
-                                onGround = true;
-                                break; // --- 8. สำคัญ: "เหยียบ" แล้ว หยุดเช็คอันอื่น ---
-                            }
-                            // เคส 4: "ลอยขึ้นไปชน"
-                            else if (velocityY < 0 &&
-                                    oldY >= platform.getY() + platform.getHeight() &&
-                                    player.getY() <= platform.getY() + platform.getHeight()) {
-                                player.setY(platform.getY() + platform.getHeight()); // ยันหัวกลับลงมา
-                                velocityY = 0;
-                                break; // --- 8. สำคัญ: "หัวชน" แล้ว หยุดเช็คอันอื่น ---
-                            }
-                        }
-                    } // --- สิ้นสุด For Loop (แกน Y) ---
-                } // สิ้นสุด if (!onGround)
-
-                // --- 2. ตรวจสอบการชนกับ "พื้นดิน" (ถ้ายังไม่เจออะไร) ---
-                if (!onGround && player.getY() >= GROUND_LEVEL) {
-                    player.setY(GROUND_LEVEL);
-                    velocityY = 0;
-                    velocityX = 0;
-                    onGround = true;
+                // เช็คเลื่อน "ลง"
+                else if (playerY + playerHeight > cameraY + CAMERA_THRESHOLD_Y_BOTTOM) {
+                    newCameraY = (playerY + playerHeight) - CAMERA_THRESHOLD_Y_BOTTOM;
                 }
 
-                // --- 3. ป้องกันทะลุขอบจอ ---
-                if (player.getX() < 0) {
-                    player.setX(0);
-                    velocityX = 0;
+                // จำกัดขอบเขตกล้อง (ไม่ให้ทะลุบน-ล่าง ของ "โลก")
+                if (newCameraY < 0) { newCameraY = 0; }
+                if (newCameraY > WORLD_HEIGHT - WINDOW_HEIGHT) {
+                    newCameraY = WORLD_HEIGHT - WINDOW_HEIGHT;
                 }
-                if (player.getX() > WINDOW_WIDTH - player.getWidth()) {
-                    player.setX(WINDOW_WIDTH - player.getWidth());
-                    velocityX = 0;
+
+                // สั่งให้ "โลก" (root) เลื่อน
+                root.setTranslateY(-newCameraY);
+
+
+                // --- 4. เช็คว่าชนะหรือยัง (ถาม Player) ---
+                if (player.hasWon()) {
+                    // ตั้งค่าตำแหน่งข้อความให้อยู่ "กลางหน้าต่าง"
+                    victoryText.setX((WINDOW_WIDTH - victoryText.getLayoutBounds().getWidth()) / 2);
+                    victoryText.setY(WINDOW_HEIGHT / 2.0);
+
+                    victoryText.setVisible(true); // โชว์ข้อความ
+                    gameLoop.stop(); // <<< สั่งหยุดเกม!
                 }
             }
         };
