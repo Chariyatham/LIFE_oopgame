@@ -1,19 +1,23 @@
 package dev.chariyatham;
 
-import javafx.scene.paint.Color;
-import javafx.scene.shape.Rectangle; // <<< ใช้ Rectangle
-import javafx.scene.Node;            // <<< คืนค่า Node
 import java.util.List;
+import javafx.scene.Node;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Rectangle;
 
-/**
- * นี่คือ Class ผู้เล่น (เวอร์ชัน บทที่ 10 - ใช้ Rectangle)
- */
 public class Player {
 
-    // --- 1. "รูปร่าง" (เป็น Rectangle) ---
-    private Rectangle shape;
+    // --- รูปร่าง ---
+    private ImageView gifView; // ตัวแสดงผล (GIF)
+    private Rectangle hitbox; // กล่องชน 
 
-    // --- (สถานะฟิสิกส์, ชาร์จ, ชนะ, ลื่น ... เหมือนเดิมเป๊ะ) ---
+    // --- คลังรูปภาพ ---
+    private Image idleGifImage;
+    private Image jumpGifImage; // <<< เพิ่มรูป Jump
+
+    // --- สถานะฟิสิกส์, ชาร์จ, ชนะ, ลื่น ---
     private double velocityX = 0;
     private double velocityY = 0;
     private boolean onGround = false;
@@ -30,121 +34,205 @@ public class Player {
     private static final double JUMP_POWER_Y_PER_LEVEL = -180.0;
     private static final double JUMP_POWER_X_PER_LEVEL = 100.0;
 
-    // --- 2. ค่าคงที่ "ขนาด" (60x80) ---
-    private static final int PLAYER_WIDTH = 60;
-    private static final int PLAYER_HEIGHT = 80;
+    // --- ค่าคงที่ ขนาด Hitbox
+    private static final int HITBOX_WIDTH = 40;
+    private static final int HITBOX_HEIGHT = 50;
 
-    // (ค่าคงที่โลก ... เหมือนเดิม)
+    // --- ค่าคงที่ ขนาด GIF
+    private static final int GIF_WIDTH = 180;
+    private static final int GIF_HEIGHT = 120;
+
+    // (ค่าคงที่โลก - ใช้ HITBOX_HEIGHT)
     private static final int WORLD_HEIGHT = 1800;
     private static final int WINDOW_WIDTH = 800;
-    private static final double GROUND_LEVEL = WORLD_HEIGHT - PLAYER_HEIGHT;
+    private static final double GROUND_LEVEL = WORLD_HEIGHT - HITBOX_HEIGHT;
 
-    /**
-     * Constructor (ตัวสร้าง) - สร้าง Rectangle
-     */
     public Player(double startX, double startY) {
-        this.shape = new Rectangle(PLAYER_WIDTH, PLAYER_HEIGHT, Color.ORANGE); // <<< สร้าง Rectangle
-        this.shape.setX(startX);
-        this.shape.setY(startY);
+
+        // สร้าง Hitbox
+        this.hitbox = new Rectangle(HITBOX_WIDTH, HITBOX_HEIGHT, Color.TRANSPARENT);
+        // this.hitbox = new Rectangle(HITBOX_WIDTH, HITBOX_HEIGHT, Color.RED);
+        this.hitbox.setX(startX);
+        this.hitbox.setY(startY);
+
+        // --- โหลดไฟล์ GIF ทั้งสอง ---
+        try {
+            idleGifImage = new Image(getClass().getResourceAsStream("/player_idle.gif"));
+            jumpGifImage = new Image(getClass().getResourceAsStream("/player_jump.gif")); // <<< โหลด Jump GIF
+
+            // เช็ค Error หลังโหลด
+            if (idleGifImage != null && idleGifImage.isError()) {
+                System.err.println("!!! Error loading Idle GIF: " + idleGifImage.getException());
+                idleGifImage = null;
+            }
+            if (jumpGifImage != null && jumpGifImage.isError()) {
+                System.err.println("!!! Error loading Jump GIF: " + jumpGifImage.getException());
+                jumpGifImage = null;
+            }
+        } catch (NullPointerException e) {
+            System.err.println("!!! หาไฟล์ GIF ไม่เจอใน resources (idle หรือ jump)");
+        } catch (Exception e) {
+            System.err.println("!!! เกิด Error ไม่คาดคิดตอนโหลด GIF:");
+            e.printStackTrace();
+        }
+
+        // --- สร้าง ImageView ---
+        // เริ่มด้วย Idle หรือรูปสำรองถ้าโหลดไม่ได้
+        Image startingImage = (idleGifImage != null) ? idleGifImage : null;
+
+        if (startingImage != null) {
+            this.gifView = new ImageView(startingImage);
+            this.gifView.setFitWidth(GIF_WIDTH);
+            this.gifView.setFitHeight(GIF_HEIGHT);
+        } else {
+            // ถ้ารูปerrorให้ใช้ Hitbox แสดงแทน
+            System.err.println("!!! ใช้ Hitbox สีส้มแสดงแทน GIF");
+            this.hitbox.setFill(Color.ORANGE);
+            this.gifView = new ImageView();
+            this.gifView.setFitWidth(0);
+            this.gifView.setFitHeight(0);
+        }
+
+        // ตั้งค่าตำแหน่ง GIF เริ่มต้น
+        updateGifPosition();
+
         this.onGround = true;
     }
 
-    /**
-     * นี่คือ "สมอง" ของผู้เล่น
-     */
+
+    private void updateGifPosition() {
+        double hitboxBottomCenterX = this.hitbox.getX() + HITBOX_WIDTH / 2.0;
+        double hitboxBottomY = this.hitbox.getY() + HITBOX_HEIGHT;
+
+        // ลองปรับค่า +/- ตรงนี้เพื่อจัดตำแหน่ง GIF ให้ตรง Hitbox
+        double gifX = hitboxBottomCenterX - GIF_WIDTH / 2.0; // <<< ปรับตรงนี้
+        double gifY = hitboxBottomY - GIF_HEIGHT; // <<< ปรับตรงนี้
+
+        this.gifView.setX(gifX);
+        this.gifView.setY(gifY);
+    }
+
+
     public void update(double deltaTime, List<Platform> allPlatforms) {
 
-        // --- อัปเดตการกลับทิศ (Flip) ---
-        // (Rectangle ไม่มี setScaleX เราเลยไม่ต้องทำอะไรตรงนี้)
+        // อัปเดต Animation (สลับ GIF!) ---
+        if (onGround) {
+            // ถ้าอยู่บนพื้น และยังไม่ได้แสดง Idle GIF (และมี Idle GIF)
+            if (this.gifView.getImage() != idleGifImage && idleGifImage != null) {
+                this.gifView.setImage(idleGifImage); // <<< เปลี่ยนเป็น Idle GIF
+            }
+        } else {
+            // ถ้าลอยอยู่ และยังไม่ได้แสดง Jump GIF (และมี Jump GIF)
+            if (this.gifView.getImage() != jumpGifImage && jumpGifImage != null) {
+                this.gifView.setImage(jumpGifImage); // <<< เปลี่ยนเป็น Jump GIF
+            }
+        }
 
-        // --- (โค้ดอัปเดตชาร์จ, แรงเสียดทาน, ฟิสิกส์ ... เหมือนเดิมเป๊ะ) ---
+        //อัปเดตการกลับทิศ (Flip) ---
+        if (isMovingLeft) {
+            this.gifView.setScaleX(-1); // กลับด้าน GIF
+        } else if (isMovingRight) {
+            this.gifView.setScaleX(1); // กลับด้าน GIF (ปกติ)
+        }
 
         // (อัปเดตชาร์จ)
         if (isChargingJump && onGround) {
             chargeTimer += deltaTime;
-            if (chargeTimer > MAX_CHARGE_TIME) chargeTimer = MAX_CHARGE_TIME;
-            if (chargeTimer >= MAX_CHARGE_TIME) currentChargeLevel = 5;
-            else if (chargeTimer >= 0.8) currentChargeLevel = 4;
-            else if (chargeTimer >= 0.6) currentChargeLevel = 3;
-            else if (chargeTimer >= 0.4) currentChargeLevel = 2;
-            else if (chargeTimer >= 0.2) currentChargeLevel = 1;
-            else currentChargeLevel = 0;
+            if (chargeTimer > MAX_CHARGE_TIME)
+                chargeTimer = MAX_CHARGE_TIME;
+            if (chargeTimer >= MAX_CHARGE_TIME)
+                currentChargeLevel = 5;
+            else if (chargeTimer >= 0.8)
+                currentChargeLevel = 4;
+            else if (chargeTimer >= 0.6)
+                currentChargeLevel = 3;
+            else if (chargeTimer >= 0.4)
+                currentChargeLevel = 2;
+            else if (chargeTimer >= 0.2)
+                currentChargeLevel = 1;
+            else
+                currentChargeLevel = 0;
         } else {
             chargeTimer = 0.0;
             currentChargeLevel = 0;
         }
-
         // (แรงเสียดทาน)
         if (onGround && onSlipperyGround) {
             if (velocityX > 0) {
                 velocityX -= FRICTION_DECEL * deltaTime;
-                if (velocityX < 0) velocityX = 0;
+                if (velocityX < 0)
+                    velocityX = 0;
             } else if (velocityX < 0) {
                 velocityX += FRICTION_DECEL * deltaTime;
-                if (velocityX > 0) velocityX = 0;
+                if (velocityX > 0)
+                    velocityX = 0;
             }
-         }
+        }
 
-        // (ฟิสิกส์ - ใช้ .getWidth() / .getHeight() ของ Rectangle)
+        // ฟิสิกส์
         if (!onGround) {
 
             // แกน X
-            double oldX = this.shape.getX();
-            this.shape.setX(this.shape.getX() + velocityX * deltaTime);
+            double oldX = this.hitbox.getX();
+            this.hitbox.setX(this.hitbox.getX() + velocityX * deltaTime);
 
             for (Platform platform : allPlatforms) {
-                boolean isOverlappingY =
-                    this.shape.getY() + this.shape.getHeight() > platform.getY() && // <<< ใช้ getHeight()
-                    this.shape.getY() < platform.getY() + platform.getHeight();
+                boolean isOverlappingY = this.hitbox.getY() + this.hitbox.getHeight() > platform.getY() &&
+                        this.hitbox.getY() < platform.getY() + platform.getHeight();
 
                 if (isOverlappingY) {
+                    // ชนซ้าย (เด้งเบาๆ)
                     if (velocityX > 0 &&
-                        oldX + this.shape.getWidth() <= platform.getX() && // <<< ใช้ getWidth()
-                        this.shape.getX() + this.shape.getWidth() >= platform.getX()) { // <<< ใช้ getWidth()
-                        this.shape.setX(platform.getX() - this.shape.getWidth()); // <<< ใช้ getWidth()
-                        velocityX = 0;
+                            oldX + this.hitbox.getWidth() <= platform.getX() &&
+                            this.hitbox.getX() + this.hitbox.getWidth() >= platform.getX()) {
+                        this.hitbox.setX(platform.getX() - this.hitbox.getWidth());
+                        velocityX = -velocityX / 2; // <<< ใช้ค่าที่คุณปรับ
                         break;
                     }
+                    // ชนขวา (เด้งเบาๆ)
                     else if (velocityX < 0 &&
-                             oldX >= platform.getX() + platform.getWidth() &&
-                             this.shape.getX() <= platform.getX() + platform.getWidth()) {
-                        this.shape.setX(platform.getX() + platform.getWidth());
-                        velocityX = 0;
+                            oldX >= platform.getX() + platform.getWidth() &&
+                            this.hitbox.getX() <= platform.getX() + platform.getWidth()) {
+                        this.hitbox.setX(platform.getX() + platform.getWidth());
+                        velocityX = -velocityX / 2; // <<< ใช้ค่าที่คุณปรับ
                         break;
                     }
                 }
             }
 
             // แกน Y
-            double oldY = this.shape.getY();
+            double oldY = this.hitbox.getY();
             velocityY += GRAVITY * deltaTime;
-            this.shape.setY(this.shape.getY() + velocityY * deltaTime);
+            this.hitbox.setY(this.hitbox.getY() + velocityY * deltaTime);
 
             for (Platform platform : allPlatforms) {
-                boolean isOverlappingX =
-                    this.shape.getX() + this.shape.getWidth() > platform.getX() && // <<< ใช้ getWidth()
-                    this.shape.getX() < platform.getX() + platform.getWidth();
+                boolean isOverlappingX = this.hitbox.getX() + this.hitbox.getWidth() > platform.getX() &&
+                        this.hitbox.getX() < platform.getX() + platform.getWidth();
 
                 if (isOverlappingX) {
-                    // (เคสเหยียบ)
+                    // เคสเหยียบ
                     if (velocityY > 0 &&
-                        oldY + this.shape.getHeight() <= platform.getY() && // <<< ใช้ getHeight()
-                        this.shape.getY() + this.shape.getHeight() >= platform.getY()) // <<< ใช้ getHeight()
-                    {
-                        this.shape.setY(platform.getY() - this.shape.getHeight()); // <<< ใช้ getHeight()
+                            oldY + this.hitbox.getHeight() <= platform.getY() &&
+                            this.hitbox.getY() + this.hitbox.getHeight() >= platform.getY()) {
+                        this.hitbox.setY(platform.getY() - this.hitbox.getHeight());
                         velocityY = 0;
                         onGround = true;
-                        // (เช็คแท่นลื่น/ชนะ ... เหมือนเดิม)
-                        if (platform.isSlippery()) { this.onSlipperyGround = true; }
-                        else { this.onSlipperyGround = false; this.velocityX = 0; }
-                        if (platform.isVictoryPlatform()) { this.hasWon = true; }
+                        if (platform.isSlippery()) {
+                            this.onSlipperyGround = true;
+                        } else {
+                            this.onSlipperyGround = false;
+                            this.velocityX = 0;
+                        }
+                        if (platform.isVictoryPlatform()) {
+                            this.hasWon = true;
+                        }
                         break;
                     }
-                    // (เคสหัวชน ... เหมือนเดิม)
+                    // เคสหัวชน
                     else if (velocityY < 0 &&
-                             oldY >= platform.getY() + platform.getHeight() &&
-                             this.shape.getY() <= platform.getY() + platform.getHeight()) {
-                        this.shape.setY(platform.getY() + platform.getHeight());
+                            oldY >= platform.getY() + platform.getHeight() &&
+                            this.hitbox.getY() <= platform.getY() + platform.getHeight()) {
+                        this.hitbox.setY(platform.getY() + platform.getHeight());
                         velocityY = 0;
                         break;
                     }
@@ -152,39 +240,54 @@ public class Player {
             }
         } // สิ้นสุด if (!onGround)
 
-        // (ชนพื้น/ขอบจอ - ใช้ .getWidth())
-        if (!onGround && this.shape.getY() >= GROUND_LEVEL) {
-            this.shape.setY(GROUND_LEVEL);
+        // (ชนพื้น/ขอบจอ - ใช้ Hitbox)
+        if (!onGround && this.hitbox.getY() >= GROUND_LEVEL) {
+            this.hitbox.setY(GROUND_LEVEL);
             velocityY = 0;
             velocityX = 0;
             onGround = true;
             onSlipperyGround = false;
         }
-        if (this.shape.getX() < 0) {
-            this.shape.setX(0);
+        if (this.hitbox.getX() < 0) {
+            this.hitbox.setX(0);
             velocityX = 0;
         }
-        if (this.shape.getX() > WINDOW_WIDTH - this.shape.getWidth()) { // <<< ใช้ getWidth()
-            this.shape.setX(WINDOW_WIDTH - this.shape.getWidth()); // <<< ใช้ getWidth()
+        if (this.hitbox.getX() > WINDOW_WIDTH - this.hitbox.getWidth()) {
+            this.hitbox.setX(WINDOW_WIDTH - this.hitbox.getWidth());
             velocityX = 0;
+        }
+
+        //อัปเดตตำแหน่ง GIF ให้ตาม Hitbox
+        updateGifPosition();
+    }
+
+    public void setMoveLeft(boolean isActive) {
+        this.isMovingLeft = isActive;
+    }
+
+    public void setMoveRight(boolean isActive) {
+        this.isMovingRight = isActive;
+    }
+
+    public void startCharging() {
+        if (this.onGround) {
+            this.isChargingJump = true;
         }
     }
 
-    // --- "ปุ่ม" ให้ Game Class กด (Public Methods) ---
-    // (เหมือนเดิมเป๊ะ!)
-    public void setMoveLeft(boolean isActive) { this.isMovingLeft = isActive; }
-    public void setMoveRight(boolean isActive) { this.isMovingRight = isActive; }
-    public void startCharging() { if (this.onGround) { this.isChargingJump = true; } }
     public void releaseJump() {
         if (isChargingJump) {
             if (currentChargeLevel > 0) {
-                // ... (โค้ดปล่อยกระโดดเหมือนเดิม) ...
                 double launchSpeedY = -200 + (currentChargeLevel * JUMP_POWER_Y_PER_LEVEL);
                 this.velocityY = launchSpeedY;
                 double launchSpeedX = 150 + (currentChargeLevel * JUMP_POWER_X_PER_LEVEL);
-                if (isMovingLeft) { this.velocityX = -launchSpeedX; }
-                else if (isMovingRight) { this.velocityX = launchSpeedX; }
-                else { this.velocityX = 0; }
+                if (isMovingLeft) {
+                    this.velocityX = -launchSpeedX;
+                } else if (isMovingRight) {
+                    this.velocityX = launchSpeedX;
+                } else {
+                    this.velocityX = 0;
+                }
                 this.onGround = false;
                 this.onSlipperyGround = false;
             }
@@ -192,16 +295,27 @@ public class Player {
         }
     }
 
-    // --- "หน้าปัด" ให้ Game Class อ่านค่า (Public Getters) ---
-    public boolean hasWon() { return this.hasWon; }
+    public boolean hasWon() {
+        return this.hasWon;
+    }
 
-    // คืนค่าเป็น Node (Class แม่ของ Rectangle)
-    public Node getShape() { return this.shape; }
+    public Node getShape() {
+        return this.gifView;
+    } 
 
-    public String getChargeLevelText() { return "Level: ".concat(String.valueOf(currentChargeLevel)); }
+    public String getChargeLevelText() {
+        return "Level: ".concat(String.valueOf(currentChargeLevel));
+    }
 
-    // (ใช้ .getY() และ .getHeight() / .getWidth() ของ Rectangle)
-    public double getY() { return this.shape.getY(); }
-    public double getHeight() { return this.shape.getHeight(); } // <<< ใช้ getHeight()
-    public double getWidth() { return this.shape.getWidth(); }   // <<< ใช้ getWidth()
+    public double getY() {
+        return this.hitbox.getY();
+    } 
+
+    public double getHeight() {
+        return this.hitbox.getHeight();
+    } 
+
+    public double getWidth() {
+        return this.hitbox.getWidth();
+    } 
 }
